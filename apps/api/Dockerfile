@@ -20,6 +20,7 @@ RUN pnpm install --frozen-lockfile
 
 # ---------- build ----------
 FROM deps AS build
+COPY turbo.json ./
 COPY packages/types ./packages/types
 COPY apps/api ./apps/api
 # Generates the Prisma client (downloads the linux query engine here —

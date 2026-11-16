@@ -18,6 +18,7 @@ FROM deps AS build
 # NEXT_PUBLIC_* must be present at BUILD time (baked into the browser bundle).
 ARG NEXT_PUBLIC_API_URL
 ENV NEXT_PUBLIC_API_URL=${NEXT_PUBLIC_API_URL}
+COPY turbo.json ./
 COPY packages/types ./packages/types
 COPY apps/web ./apps/web
 # turbo builds @repo/types first (via ^build), then the web app.
