@@ -36,3 +36,8 @@ coverage/
 
 # TS incremental build cache
 *.tsbuildinfo
+
+# compiled output belongs in dist/, never beside TS sources
+packages/*/src/**/*.js
+packages/*/src/**/*.d.ts
+packages/*/src/**/*.js.map
