@@ -1,0 +1,67 @@
+# Local development stack: Postgres + API + Web.
+# Usage:
+#   cp .env.example .env   # fill in JWT_SECRET etc.
+#   docker compose up --build
+#
+# The API waits for Postgres to be healthy, runs migrations + seed, then starts.
+
+services:
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: hotel_booking
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d hotel_booking"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  api:
+    build:
+      context: .
+      dockerfile: apps/api/Dockerfile
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      NODE_ENV: production
+      PORT: "3000"
+      DATABASE_URL: "postgresql://postgres:postgres@db:5432/hotel_booking?schema=public"
+      DIRECT_URL: "postgresql://postgres:postgres@db:5432/hotel_booking?schema=public"
+      JWT_SECRET: "${JWT_SECRET}"
+      JWT_EXPIRES_IN: "1h"
+      CORS_ORIGINS: "http://localhost:3001"
+      SEED_ADMIN_EMAIL: "${SEED_ADMIN_EMAIL:-admin@hotel.local}"
+      SEED_ADMIN_PASSWORD: "${SEED_ADMIN_PASSWORD:-Admin12345}"
+    ports:
+      - "3000:3000"
+    # Migrate, seed, then run the server.
+    command: >
+      sh -c "pnpm --filter @repo/api exec prisma migrate deploy &&
+             pnpm --filter @repo/api exec prisma db seed &&
+             node apps/api/dist/main.js"
+
+  web:
+    build:
+      context: .
+      dockerfile: apps/web/Dockerfile
+      args:
+        NEXT_PUBLIC_API_URL: "http://localhost:3000/api/v1"
+    restart: unless-stopped
+    depends_on:
+      - api
+    environment:
+      NODE_ENV: production
+    ports:
+      - "3001:3001"
+
+volumes:
+  pgdata:

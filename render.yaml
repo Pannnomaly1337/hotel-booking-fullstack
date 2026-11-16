@@ -1,0 +1,35 @@
+# Render Blueprint for the NestJS API (Docker runtime).
+# Deploy: Render dashboard → New → Blueprint → point at this repo.
+# DATABASE_URL / DIRECT_URL / CORS_ORIGINS are set manually (sync:false)
+# after you create the Neon DB and know the Vercel URL.
+
+services:
+  - type: web
+    name: hotel-api
+    runtime: docker
+    dockerfilePath: ./apps/api/Dockerfile
+    dockerContext: .
+    plan: free
+    region: singapore
+    healthCheckPath: /api/v1/health
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: PORT
+        value: "3000"
+      - key: JWT_SECRET
+        generateValue: true # Render generates a strong secret
+      - key: JWT_EXPIRES_IN
+        value: "1h"
+      - key: DATABASE_URL
+        sync: false # ← Neon POOLED connection string (…-pooler…)
+      - key: DIRECT_URL
+        sync: false # ← Neon DIRECT connection string (for migrations)
+      - key: CORS_ORIGINS
+        sync: false # ← your Vercel URL, e.g. https://hotel-web.vercel.app
+      - key: COOKIE_DOMAIN
+        value: ""
+      - key: SEED_ADMIN_EMAIL
+        sync: false
+      - key: SEED_ADMIN_PASSWORD
+        sync: false
