@@ -7,9 +7,12 @@ import { validateEnv } from "./config/env.validation";
 import { PrismaModule } from "./prisma/prisma.module";
 import { AuthModule } from "./modules/auth/auth.module";
 import { UsersModule } from "./modules/users/users.module";
-import { RoomsModule } from "./modules/rooms/rooms.module";
-import { BookingsModule } from "./modules/bookings/bookings.module";
-import { ContactsModule } from "./modules/contacts/contacts.module";
+// ⏸️ v1 modules ปิดชั่วคราว — อ้าง schema เก่า จะเขียนใหม่ทีละ milestone
+//    rooms → M1.3, bookings → M1.4, contacts → ตัดทิ้ง
+//    (โค้ดเดิมย้ายไปที่ apps/api/.v1-disabled/ ไว้อ้างอิง)
+// import { RoomsModule } from "./modules/rooms/rooms.module";
+// import { BookingsModule } from "./modules/bookings/bookings.module";
+// import { ContactsModule } from "./modules/contacts/contacts.module";
 import { JwtAuthGuard } from "./common/guards/jwt-auth.guard";
 import { RolesGuard } from "./common/guards/roles.guard";
 import { AllExceptionsFilter } from "./common/filters/all-exceptions.filter";
@@ -29,9 +32,9 @@ import { HealthController } from "./health.controller";
     PrismaModule,
     AuthModule,
     UsersModule,
-    RoomsModule,
-    BookingsModule,
-    ContactsModule,
+    // RoomsModule,     // ⏸️ M1.3
+    // BookingsModule,  // ⏸️ M1.4
+    // ContactsModule,  // ⏸️ ตัดทิ้ง
   ],
   controllers: [HealthController],
   providers: [

@@ -1,128 +1,216 @@
-// Prisma schema — Postgres (Neon in prod, docker Postgres in dev)
-// Migrated from the original Mongoose models.
+// HotelHub — Prisma schema
+// Milestone 1: Core Booking Engine
+// (housekeeping=M2, dynamic pricing=M3, audit log=M4 จะเพิ่มทีหลัง — ออกแบบเท่าที่ M1 ใช้)
 
 generator client {
   provider = "prisma-client-js"
 }
 
 datasource db {
-  provider = "postgresql"
-  url      = env("DATABASE_URL")
-  // directUrl is the non-pooled Neon connection, used for migrations only.
-  // In dev (docker) it can point to the same URL as DATABASE_URL.
-  directUrl = env("DIRECT_URL")
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")   // pooled (runtime)
+  directUrl = env("DIRECT_URL")     // direct (migrations)
 }
 
+// ───────────────────────── Enums ─────────────────────────
+
+// 5 roles ตาม brief — แยกสิทธิ์การเข้าถึง feature
 enum Role {
-  user
+  customer
+  frontdesk
+  housekeeping
+  manager
   admin
 }
 
-enum RoomType {
-  Single
-  Double
-  Twin
-}
-
+// สถานะห้องจริง (housekeeping/operations) — คนละเรื่องกับ "ว่างให้จองไหม"
 enum RoomStatus {
-  Available
-  Occupied
-  Reserved
-  Cleaning
-  Maintenance
+  available
+  occupied
+  reserved
+  cleaning
+  maintenance
 }
 
 enum BookingStatus {
-  pending
-  confirmed
+  pending     // จองแล้ว รอจ่าย/ยืนยัน
+  confirmed   // ยืนยันแล้ว
   checked_in
   checked_out
   cancelled
+  no_show
 }
 
-model User {
-  id        String   @id @default(cuid())
-  firstname String
-  lastname  String
-  imagelink String   @default("#")
-  detail    String   @default("#")
-  email     String   @unique
-  password  String // bcrypt hash — never selected by default in queries
-  role      Role     @default(user)
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+// ช่องทางการจอง — online (customer เอง) vs walk_in/phone (frontdesk จองแทน)
+enum BookingChannel {
+  online
+  walk_in
+  phone
+}
 
-  // Relations
-  bookings       Booking[]
-  occupiedRooms  Room[]    @relation("RoomCurrentGuest")
+enum PaymentMethod {
+  card
+  promptpay
+  cash
+  bank_transfer
+}
+
+enum PaymentStatus {
+  pending         // ยังไม่จ่าย
+  partially_paid  // จ่ายมัดจำบางส่วน (F5 deposit)
+  paid
+  refunded
+  failed
+}
+
+// ───────────────────────── Models ─────────────────────────
+
+model User {
+  id           String   @id @default(cuid())
+  firstName    String
+  lastName     String
+  email        String   @unique
+  phone        String?
+  passwordHash String
+  role         Role     @default(customer) // สมัครเองได้แค่ customer; staff สร้างโดย admin
+  isActive     Boolean  @default(true)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  bookingsMade  Booking[]      @relation("BookingBooker") // booking ที่ user นี้เป็นคนทำ (customer เอง หรือ frontdesk)
+  refreshTokens RefreshToken[]
 
   @@map("users")
 }
 
-model Room {
-  id          String     @id @default(cuid())
-  roomNumber  Int        @unique
-  type        RoomType
-  status      RoomStatus @default(Available)
-  floor       Int
-  roomRate    Float
-  imagelink   String?
-  notes       String?
-  size        String?
-  additional1 String?
-  additional2 String?
-  additional3 String?
-  createdAt   DateTime   @default(now())
-  updatedAt   DateTime   @updatedAt
+// Refresh token เก็บในตาราง (ADR: rotation + reuse detection + logout revoke)
+// เก็บ "hash" ของ token ไม่ใช่ token ดิบ — ถ้า DB รั่ว token ที่ขโมยไปใช้ไม่ได้
+model RefreshToken {
+  id        String    @id @default(cuid())
+  userId    String
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  tokenHash String    @unique // sha256 ของ refresh token
+  family    String             // สาย session เดียวกัน — ถ้าเจอ token เก่าถูกใช้ซ้ำ = ถูกขโมย → revoke ทั้ง family
+  expiresAt DateTime
+  revokedAt DateTime? // null = ยังใช้ได้
+  createdAt DateTime  @default(now())
 
-  // The guest currently assigned to the room (nullable)
-  currentGuestId String?
-  currentGuest   User?   @relation("RoomCurrentGuest", fields: [currentGuestId], references: [id], onDelete: SetNull)
+  @@index([userId])
+  @@index([family])
+  @@map("refresh_tokens")
+}
 
+model RoomType {
+  id          String   @id @default(cuid())
+  name        String                       // "Deluxe Double"
+  slug        String   @unique
+  description String
+  basePrice   Decimal  @db.Decimal(10, 2)  // Decimal เสมอกับเงิน (float ปัดเศษเพี้ยน)
+  maxAdults   Int
+  maxChildren Int      @default(0)
+  bedType     String                       // "1 King" / "2 Twin"
+  sizeSqm     Int
+  images      String[] @default([])
+  amenities   String[] @default([])
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  rooms    Room[]
   bookings Booking[]
 
+  @@map("room_types")
+}
+
+model Room {
+  id         String     @id @default(cuid())
+  roomNumber Int        @unique
+  floor      Int
+  status     RoomStatus @default(available) // สถานะ operations ณ ตอนนี้
+  roomTypeId String
+  roomType   RoomType   @relation(fields: [roomTypeId], references: [id], onDelete: Cascade)
+  createdAt  DateTime   @default(now())
+  updatedAt  DateTime   @updatedAt
+
+  bookings Booking[] // ห้องจริงที่ถูก assign (null จนกว่าจะ check-in)
+
+  @@index([roomTypeId])
   @@index([status])
   @@map("rooms")
 }
 
 model Booking {
-  id                 String        @id @default(cuid())
-  confirmationNumber String        @unique
-  checkInDate        DateTime
-  checkOutDate       DateTime
-  nights             Int
-  firstname          String
-  lastname           String
-  email              String
-  phone              String
-  specialRequest     String?
-  // pricing (flattened from the embedded Mongo sub-document)
-  roomRate           Float
-  totalAmount        Float
-  status             BookingStatus @default(pending)
-  createdAt          DateTime      @default(now())
-  updatedAt          DateTime      @updatedAt
+  id                 String         @id @default(cuid())
+  confirmationNumber String         @unique
+  channel            BookingChannel @default(online)
 
-  userId String
-  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  // จองที่ระดับ RoomType; assign Room จริงทีหลัง (เหมือนโรงแรมจริง — ดู ADR-001)
+  roomTypeId String
+  roomType   RoomType @relation(fields: [roomTypeId], references: [id])
+  roomId     String?
+  room       Room?    @relation(fields: [roomId], references: [id])
 
-  roomId String
-  room   Room   @relation(fields: [roomId], references: [id], onDelete: Cascade)
+  // ใครเป็นคน "ทำ" booking (customer เอง หรือ frontdesk ทำแทน) — แยกจากผู้เข้าพัก
+  bookerId String
+  booker   User   @relation("BookingBooker", fields: [bookerId], references: [id])
 
-  @@index([userId])
-  @@index([roomId])
+  // ช่วงวันที่ + ผู้เข้าพัก
+  checkIn  DateTime @db.Date
+  checkOut DateTime @db.Date
+  nights   Int
+  adults   Int
+  children Int      @default(0)
+
+  // ⚠️ PII (ADR-011 / PDPA) — ข้อมูลส่วนบุคคลของผู้เข้าพัก (อาจไม่ใช่คนจอง)
+  // ต้อง redact ออกจาก log, การเข้าถึง/แก้ไขต้องบันทึกใน Audit Log (M4)
+  guestFirstName   String
+  guestLastName    String
+  guestEmail       String
+  guestPhone       String
+  guestCountry     String   @default("TH")
+  specialRequest   String?
+  estimatedArrival String?
+
+  // ราคา — เก็บเป็น snapshot ตอนจอง (ADR-004: ราคาเปลี่ยนทีหลัง ใบจองเก่าต้องไม่เปลี่ยน)
+  currency       String  @default("THB")
+  roomSubtotal   Decimal @db.Decimal(10, 2)
+  taxAmount      Decimal @db.Decimal(10, 2) // VAT 7%
+  serviceCharge  Decimal @db.Decimal(10, 2) // 10%
+  discountAmount Decimal @default(0) @db.Decimal(10, 2)
+  totalAmount    Decimal @db.Decimal(10, 2)
+
+  // นโยบายยกเลิก (M1 ใช้แบบเดียว; หลาย rate plan จะมาใน M3)
+  refundableUntil DateTime?
+
+  // pending หมดอายุเมื่อไหร่ (ADR-008 — hold 15 นาที กัน inventory ค้าง)
+  // Redis TTL เป็นตัวปล่อยห้องหลัก; field นี้คือความจริงใน DB ไว้ query/กู้สถานะ
+  expiresAt DateTime?
+
+  status    BookingStatus @default(pending)
+  payment   Payment?
+  createdAt DateTime      @default(now())
+  updatedAt DateTime      @updatedAt
+
+  // index สำหรับเช็ค availability (overlap query) ให้เร็ว — ADR-002
+  @@index([roomTypeId, checkIn, checkOut])
+  @@index([bookerId])
   @@index([status])
   @@map("bookings")
 }
 
-model Contact {
-  id        String   @id @default(cuid())
-  name      String
-  email     String
-  subject   String
-  message   String
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+model Payment {
+  id         String    @id @default(cuid())
+  bookingId  String    @unique
+  booking    Booking   @relation(fields: [bookingId], references: [id], onDelete: Cascade)
+  method     PaymentMethod
+  status     PaymentStatus @default(pending)
+  amount     Decimal   @db.Decimal(10, 2) // ยอดที่ต้องจ่ายทั้งหมด
+  amountPaid Decimal   @default(0) @db.Decimal(10, 2) // จ่ายไปแล้วเท่าไหร่ (รองรับ partial/deposit — F5)
+  currency   String    @default("THB")
+  provider   String?   // "stripe"
+  providerIntentId String? // Stripe PaymentIntent id — idempotency กันหักซ้ำ (ADR-005/006)
+  paidAt     DateTime?
+  createdAt  DateTime  @default(now())
+  updatedAt  DateTime  @updatedAt
 
-  @@map("contacts")
+  @@map("payments")
 }

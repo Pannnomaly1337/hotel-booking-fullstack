@@ -15,8 +15,9 @@ import { UsersModule } from "../users/users.module";
       imports: [ConfigModule],
       inject: [ConfigService],
       useFactory: (config: ConfigService) => ({
+        // default = access token (อายุสั้น); refresh เซ็นแยกด้วย secret คนละตัวใน service
         secret: config.get<string>("JWT_SECRET"),
-        signOptions: { expiresIn: config.get<string>("JWT_EXPIRES_IN") ?? "1h" },
+        signOptions: { expiresIn: config.get<string>("JWT_ACCESS_EXPIRES") ?? "15m" },
       }),
     }),
   ],

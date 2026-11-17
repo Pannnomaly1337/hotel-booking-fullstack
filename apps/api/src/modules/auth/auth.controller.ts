@@ -16,13 +16,14 @@ import {
 } from "../../common/decorators/current-user.decorator";
 import { AuthService } from "./auth.service";
 import { UsersService } from "../users/users.service";
-import { authCookieOptions } from "./cookie.util";
+import { accessCookieOptions, refreshCookieOptions } from "./cookie.util";
 import { LoginDto } from "./dto/login.dto";
 
-// Paths preserved from the original API so the frontend changes stay minimal:
+// Paths:
 //   POST /api/v1/users/auth/cookie/login
 //   POST /api/v1/users/auth/cookie/logout
 //   GET  /api/v1/users/auth/cookie/me
+//   (refresh จะเพิ่มใน chunk c)
 @Controller("users/auth/cookie")
 export class AuthController {
   constructor(
@@ -32,7 +33,7 @@ export class AuthController {
   ) {}
 
   @Public()
-  @Throttle({ default: { limit: 5, ttl: 60_000 } }) // brute-force protection on login
+  @Throttle({ default: { limit: 5, ttl: 60_000 } }) // กัน brute-force ที่ login
   @HttpCode(200)
   @Post("login")
   async login(
@@ -40,15 +41,8 @@ export class AuthController {
     @Res({ passthrough: true }) res: Response,
   ) {
     const user = await this.auth.validateCredentials(dto.email, dto.password);
-    const token = this.auth.signToken(user.id, user.role);
-
-    const isProd = this.config.get("NODE_ENV") === "production";
-    res.cookie(
-      "accessToken",
-      token,
-      authCookieOptions(isProd, this.config.get("COOKIE_DOMAIN")),
-    );
-
+    const { accessToken, refreshToken } = await this.auth.issueTokens(user);
+    this.setAuthCookies(res, accessToken, refreshToken);
     return {
       success: true,
       message: "login successfully",
@@ -60,11 +54,11 @@ export class AuthController {
   @HttpCode(200)
   @Post("logout")
   logout(@Res({ passthrough: true }) res: Response) {
+    // chunk c: จะ revoke refresh token ใน DB ด้วย — ตอนนี้เคลียร์ cookie ทั้งสอง
     const isProd = this.config.get("NODE_ENV") === "production";
-    res.clearCookie(
-      "accessToken",
-      authCookieOptions(isProd, this.config.get("COOKIE_DOMAIN")),
-    );
+    const domain = this.config.get<string>("COOKIE_DOMAIN");
+    res.clearCookie("accessToken", accessCookieOptions(isProd, domain));
+    res.clearCookie("refreshToken", refreshCookieOptions(isProd, domain));
     return { success: true, message: "logged out successfully" };
   }
 
@@ -72,5 +66,21 @@ export class AuthController {
   async me(@CurrentUser() current: AuthUser) {
     const user = await this.users.findByIdOrThrow(current.id);
     return { success: true, user: this.users.toPublicUser(user) };
+  }
+
+  /** ตั้ง cookie ทั้งสอง (chunk c จะเรียกใช้ซ้ำตอน refresh) */
+  private setAuthCookies(
+    res: Response,
+    accessToken: string,
+    refreshToken: string,
+  ) {
+    const isProd = this.config.get("NODE_ENV") === "production";
+    const domain = this.config.get<string>("COOKIE_DOMAIN");
+    res.cookie("accessToken", accessToken, accessCookieOptions(isProd, domain));
+    res.cookie(
+      "refreshToken",
+      refreshToken,
+      refreshCookieOptions(isProd, domain),
+    );
   }
 }

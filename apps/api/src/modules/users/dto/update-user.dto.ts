@@ -9,31 +9,25 @@ import {
 import { Role } from "@repo/types";
 
 /**
- * Update input. `role` is accepted here but the service only applies it
- * when the requester is an admin — a regular user cannot escalate.
- * ValidationPipe (whitelist + forbidNonWhitelisted) strips any other
- * field, so mass-assignment of unknown columns is impossible.
+ * Update input — `role` รับได้ แต่ service จะ apply เฉพาะตอน requester เป็น admin
+ * (กัน user ธรรมดายกระดับตัวเอง) ValidationPipe (whitelist + forbidNonWhitelisted)
+ * ตัด field แปลกปลอมทิ้ง → mass-assignment คอลัมน์ที่ไม่ได้ประกาศเป็นไปไม่ได้
  */
 export class UpdateUserDto {
   @IsOptional()
   @IsString()
   @MaxLength(100)
-  firstname?: string;
+  firstName?: string;
 
   @IsOptional()
   @IsString()
   @MaxLength(100)
-  lastname?: string;
+  lastName?: string;
 
   @IsOptional()
   @IsString()
-  @MaxLength(500)
-  imagelink?: string;
-
-  @IsOptional()
-  @IsString()
-  @MaxLength(1000)
-  detail?: string;
+  @MaxLength(20)
+  phone?: string;
 
   @IsOptional()
   @IsEmail()
@@ -46,6 +40,6 @@ export class UpdateUserDto {
   password?: string;
 
   @IsOptional()
-  @IsIn(["user", "admin"])
+  @IsIn(["customer", "frontdesk", "housekeeping", "manager", "admin"])
   role?: Role;
 }

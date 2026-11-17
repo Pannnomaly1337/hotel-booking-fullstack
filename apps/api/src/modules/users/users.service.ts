@@ -18,14 +18,18 @@ const BCRYPT_ROUNDS = 10;
 export class UsersService {
   constructor(private readonly prisma: PrismaService) {}
 
-  /** Strip the password hash before returning a user to any client. */
+  /** ตัด passwordHash ออกก่อนส่งให้ client เสมอ (map field ตาม PublicUser) */
   toPublicUser(user: User): PublicUser {
-    const { password: _password, ...rest } = user;
     return {
-      ...rest,
-      role: rest.role as Role,
-      createdAt: rest.createdAt.toISOString(),
-      updatedAt: rest.updatedAt.toISOString(),
+      id: user.id,
+      firstName: user.firstName,
+      lastName: user.lastName,
+      email: user.email,
+      phone: user.phone,
+      role: user.role as Role,
+      isActive: user.isActive,
+      createdAt: user.createdAt.toISOString(),
+      updatedAt: user.updatedAt.toISOString(),
     };
   }
 
@@ -47,16 +51,18 @@ export class UsersService {
     return this.toPublicUser(user);
   }
 
+  /** สมัครสมาชิก — role ไม่รับจาก input → default "customer" ใน DB */
   async create(dto: CreateUserDto): Promise<PublicUser> {
     const passwordHash = await bcrypt.hash(dto.password, BCRYPT_ROUNDS);
     try {
       const user = await this.prisma.user.create({
         data: {
-          firstname: dto.firstname,
-          lastname: dto.lastname,
+          firstName: dto.firstName,
+          lastName: dto.lastName,
           email: dto.email.trim().toLowerCase(),
-          password: passwordHash,
-          // role intentionally omitted — defaults to "user"
+          phone: dto.phone,
+          passwordHash,
+          // role เว้นไว้ → default customer (กัน self-escalate)
         },
       });
       return this.toPublicUser(user);
@@ -76,11 +82,11 @@ export class UsersService {
     dto: UpdateUserDto,
     requester: AuthUser,
   ): Promise<PublicUser> {
-    // Only self or admin may update.
+    // แก้ได้เฉพาะตัวเอง หรือ admin
     if (requester.role !== "admin" && requester.id !== id) {
       throw new ForbiddenException("You cannot modify another user");
     }
-    // Only admins may change roles (privilege-escalation guard).
+    // เปลี่ยน role ได้เฉพาะ admin (กัน privilege escalation)
     if (dto.role !== undefined && requester.role !== "admin") {
       throw new ForbiddenException("You cannot change your role");
     }
@@ -88,16 +94,13 @@ export class UsersService {
     await this.findByIdOrThrow(id);
 
     const data: Prisma.UserUpdateInput = {};
-    if (dto.firstname !== undefined) data.firstname = dto.firstname;
-    if (dto.lastname !== undefined) data.lastname = dto.lastname;
-    if (dto.imagelink !== undefined) data.imagelink = dto.imagelink;
-    if (dto.detail !== undefined) data.detail = dto.detail;
+    if (dto.firstName !== undefined) data.firstName = dto.firstName;
+    if (dto.lastName !== undefined) data.lastName = dto.lastName;
+    if (dto.phone !== undefined) data.phone = dto.phone;
     if (dto.email !== undefined) data.email = dto.email.trim().toLowerCase();
     if (dto.role !== undefined) data.role = dto.role;
-    // Re-hash the password here — the original lost this when switching to
-    // findByIdAndUpdate, storing plaintext. Never again.
     if (dto.password !== undefined) {
-      data.password = await bcrypt.hash(dto.password, BCRYPT_ROUNDS);
+      data.passwordHash = await bcrypt.hash(dto.password, BCRYPT_ROUNDS);
     }
 
     try {
