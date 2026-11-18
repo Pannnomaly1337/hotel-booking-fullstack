@@ -4,11 +4,13 @@ import {
   Get,
   HttpCode,
   Post,
+  Req,
   Res,
+  UnauthorizedException,
 } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
 import { Throttle } from "@nestjs/throttler";
-import { Response } from "express";
+import { Request, Response } from "express";
 import { Public } from "../../common/decorators/public.decorator";
 import {
   CurrentUser,
@@ -19,11 +21,6 @@ import { UsersService } from "../users/users.service";
 import { accessCookieOptions, refreshCookieOptions } from "./cookie.util";
 import { LoginDto } from "./dto/login.dto";
 
-// Paths:
-//   POST /api/v1/users/auth/cookie/login
-//   POST /api/v1/users/auth/cookie/logout
-//   GET  /api/v1/users/auth/cookie/me
-//   (refresh จะเพิ่มใน chunk c)
 @Controller("users/auth/cookie")
 export class AuthController {
   constructor(
@@ -33,7 +30,7 @@ export class AuthController {
   ) {}
 
   @Public()
-  @Throttle({ default: { limit: 5, ttl: 60_000 } }) // กัน brute-force ที่ login
+  @Throttle({ default: { limit: 5, ttl: 60_000 } })
   @HttpCode(200)
   @Post("login")
   async login(
@@ -52,13 +49,36 @@ export class AuthController {
 
   @Public()
   @HttpCode(200)
+  @Post("refresh")
+  async refresh(
+    @Req() req: Request,
+    @Res({ passthrough: true }) res: Response,
+  ) {
+    const token = req.cookies?.refreshToken as string | undefined;
+    if (!token) {
+      throw new UnauthorizedException("No refresh token");
+    }
+    try {
+      const { user, tokens } = await this.auth.rotateRefresh(token);
+      this.setAuthCookies(res, tokens.accessToken, tokens.refreshToken);
+      return { success: true, user: this.users.toPublicUser(user) };
+    } catch (e) {
+      this.clearAuthCookies(res);
+      throw e;
+    }
+  }
+
+  @Public()
+  @HttpCode(200)
   @Post("logout")
-  logout(@Res({ passthrough: true }) res: Response) {
-    // chunk c: จะ revoke refresh token ใน DB ด้วย — ตอนนี้เคลียร์ cookie ทั้งสอง
-    const isProd = this.config.get("NODE_ENV") === "production";
-    const domain = this.config.get<string>("COOKIE_DOMAIN");
-    res.clearCookie("accessToken", accessCookieOptions(isProd, domain));
-    res.clearCookie("refreshToken", refreshCookieOptions(isProd, domain));
+  async logout(
+    @Req() req: Request,
+    @Res({ passthrough: true }) res: Response,
+  ) {
+    await this.auth.revokeRefreshToken(
+      req.cookies?.refreshToken as string | undefined,
+    );
+    this.clearAuthCookies(res);
     return { success: true, message: "logged out successfully" };
   }
 
@@ -68,7 +88,8 @@ export class AuthController {
     return { success: true, user: this.users.toPublicUser(user) };
   }
 
-  /** ตั้ง cookie ทั้งสอง (chunk c จะเรียกใช้ซ้ำตอน refresh) */
+  // ---- cookie helpers ----
+
   private setAuthCookies(
     res: Response,
     accessToken: string,
@@ -82,5 +103,12 @@ export class AuthController {
       refreshToken,
       refreshCookieOptions(isProd, domain),
     );
+  }
+
+  private clearAuthCookies(res: Response) {
+    const isProd = this.config.get("NODE_ENV") === "production";
+    const domain = this.config.get<string>("COOKIE_DOMAIN");
+    res.clearCookie("accessToken", accessCookieOptions(isProd, domain));
+    res.clearCookie("refreshToken", refreshCookieOptions(isProd, domain));
   }
 }
