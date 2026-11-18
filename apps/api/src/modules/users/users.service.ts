@@ -11,6 +11,7 @@ import { PublicUser, Role } from "@repo/types";
 import { CreateUserDto } from "./dto/create-user.dto";
 import { UpdateUserDto } from "./dto/update-user.dto";
 import { AuthUser } from "../../common/decorators/current-user.decorator";
+import { assertCanAccess } from "../../common/auth/ownership.util";
 
 const BCRYPT_ROUNDS = 10;
 
@@ -82,10 +83,8 @@ export class UsersService {
     dto: UpdateUserDto,
     requester: AuthUser,
   ): Promise<PublicUser> {
-    // แก้ได้เฉพาะตัวเอง หรือ admin
-    if (requester.role !== "admin" && requester.id !== id) {
-      throw new ForbiddenException("You cannot modify another user");
-    }
+    // แก้ได้เฉพาะตัวเอง หรือ admin (object-level authz — กัน IDOR)
+    assertCanAccess(id, requester, ["admin"]);
     // เปลี่ยน role ได้เฉพาะ admin (กัน privilege escalation)
     if (dto.role !== undefined && requester.role !== "admin") {
       throw new ForbiddenException("You cannot change your role");
@@ -118,9 +117,7 @@ export class UsersService {
   }
 
   async remove(id: string, requester: AuthUser): Promise<void> {
-    if (requester.role !== "admin" && requester.id !== id) {
-      throw new ForbiddenException("You cannot delete another user");
-    }
+    assertCanAccess(id, requester, ["admin"]); // object-level authz — กัน IDOR
     await this.findByIdOrThrow(id);
     await this.prisma.user.delete({ where: { id } });
   }

@@ -2,7 +2,6 @@ import {
   Body,
   Controller,
   Delete,
-  ForbiddenException,
   Get,
   HttpCode,
   Param,
@@ -15,6 +14,7 @@ import {
   CurrentUser,
   AuthUser,
 } from "../../common/decorators/current-user.decorator";
+import { assertCanAccess } from "../../common/auth/ownership.util";
 import { UsersService } from "./users.service";
 import { CreateUserDto } from "./dto/create-user.dto";
 import { UpdateUserDto } from "./dto/update-user.dto";
@@ -42,9 +42,7 @@ export class UsersController {
   // Self or admin.
   @Get(":id")
   async findOne(@Param("id") id: string, @CurrentUser() current: AuthUser) {
-    if (current.role !== "admin" && current.id !== id) {
-      throw new ForbiddenException("You cannot view another user");
-    }
+    assertCanAccess(id, current, ["admin"]); // object-level authz — กัน IDOR
     const data = await this.users.findOne(id);
     return { success: true, data };
   }

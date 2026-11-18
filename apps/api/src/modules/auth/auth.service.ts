@@ -11,6 +11,12 @@ export interface IssuedTokens {
   refreshToken: string;
 }
 
+interface RefreshPayload {
+  sub: string;
+  family: string;
+  jti: string;
+}
+
 @Injectable()
 export class AuthService {
   constructor(
@@ -19,7 +25,6 @@ export class AuthService {
     private readonly config: ConfigService,
   ) {}
 
-  /** ตรวจ credentials — โยน 401 เหมือนกันหมดไม่ว่า email ผิดหรือ password ผิด (กัน user enumeration) */
   async validateCredentials(email: string, password: string): Promise<User> {
     const normalizedEmail = String(email).trim().toLowerCase();
     const user = await this.prisma.user.findUnique({
@@ -40,20 +45,15 @@ export class AuthService {
     return user;
   }
 
-  /** login ใหม่ = สร้าง family ใหม่ (1 family = 1 session/เครื่อง) */
   async issueTokens(user: User): Promise<IssuedTokens> {
     return this.signAndStore(user, randomUUID());
   }
 
-  /**
-   * เซ็น access + refresh แล้วเก็บ hash ของ refresh ลง DB
-   * chunk c (rotate) จะเรียกซ้ำโดยส่ง family เดิมมา เพื่อสืบสาย session
-   */
   async signAndStore(user: User, family: string): Promise<IssuedTokens> {
-    // access: ใช้ default ของ JwtModule (secret + อายุ 15m)
+    // access
     const accessToken = this.jwt.sign({ sub: user.id, role: user.role });
 
-    // refresh: secret แยก + อายุยาว, ฝัง family + jti (id เฉพาะของใบนี้)
+    // refresh
     const refreshToken = this.jwt.sign(
       { sub: user.id, family, jti: randomUUID() },
       {
@@ -74,12 +74,68 @@ export class AuthService {
     return { accessToken, refreshToken };
   }
 
-  /** sha256 ของ token — เก็บ hash ไม่เก็บ token ดิบ (ถ้า DB รั่ว token ที่ขโมยไปใช้ไม่ได้) */
+  async rotateRefresh(oldToken: string): Promise<{ user: User; tokens: IssuedTokens }> {
+    let payload: RefreshPayload;
+    try {
+      payload = this.jwt.verify<RefreshPayload>(oldToken, {
+        secret: this.config.get<string>("JWT_REFRESH_SECRET"),
+      });
+    } catch {
+      throw new UnauthorizedException("Invalid refresh token");
+    }
+
+    const tokenHash = this.hashToken(oldToken);
+    const record = await this.prisma.refreshToken.findUnique({
+      where: { tokenHash },
+    });
+
+    if (!record) {
+      throw new UnauthorizedException("Refresh token not recognized");
+    }
+
+    if (record.revokedAt) {
+      await this.revokeFamily(record.family);
+      throw new UnauthorizedException("Refresh token reuse detected");
+    }
+
+    if (record.expiresAt < new Date()) {
+      throw new UnauthorizedException("Refresh token expired");
+    }
+
+    const user = await this.prisma.user.findUnique({
+      where: { id: payload.sub },
+    });
+    if (!user || !user.isActive) {
+      throw new UnauthorizedException("User not found or disabled");
+    }
+
+    await this.prisma.refreshToken.update({
+      where: { tokenHash },
+      data: { revokedAt: new Date() },
+    });
+    const tokens = await this.signAndStore(user, record.family);
+    return { user, tokens };
+  }
+
+  async revokeFamily(family: string): Promise<void> {
+    await this.prisma.refreshToken.updateMany({
+      where: { family, revokedAt: null },
+      data: { revokedAt: new Date() },
+    });
+  }
+
+  async revokeRefreshToken(token: string | undefined): Promise<void> {
+    if (!token) return;
+    await this.prisma.refreshToken.updateMany({
+      where: { tokenHash: this.hashToken(token), revokedAt: null },
+      data: { revokedAt: new Date() },
+    });
+  }
+
   hashToken(token: string): string {
     return createHash("sha256").update(token).digest("hex");
   }
 
-  /** ดึงเวลาหมดอายุจาก token (exp เป็น unix วินาที) ไปเก็บใน DB */
   private decodeExpiry(token: string): Date {
     const decoded = this.jwt.decode(token) as { exp?: number } | null;
     return decoded?.exp
