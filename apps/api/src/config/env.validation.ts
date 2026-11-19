@@ -21,6 +21,8 @@ const envSchema = z.object({
     .string()
     .min(32, "JWT_REFRESH_SECRET must be at least 32 characters — generate a long random value"),
   JWT_REFRESH_EXPIRES: z.string().default("7d"),
+  // Redis — ใช้ทำ distributed lock (กันจองซ้อน), TTL (pending hold), ภายหลัง rate-limit/cache
+  REDIS_URL: z.string().default("redis://localhost:6379"),
   CORS_ORIGINS: z.string().default("http://localhost:3001"),
   COOKIE_DOMAIN: z.string().optional().default(""),
 });
