@@ -1,0 +1,33 @@
+import { Body, Controller, Get, Param, Post } from "@nestjs/common";
+import {
+  CurrentUser,
+  AuthUser,
+} from "../../common/decorators/current-user.decorator";
+import { BookingsService } from "./bookings.service";
+import { CreateBookingDto } from "./dto/create-booking.dto";
+
+@Controller("bookings")
+export class BookingsController {
+  constructor(private readonly bookings: BookingsService) {}
+
+  @Post()
+  async create(
+    @Body() dto: CreateBookingDto,
+    @CurrentUser() user: AuthUser,
+  ) {
+    const data = await this.bookings.create(dto, user);
+    return { success: true, data };
+  }
+
+  @Get()
+  async mine(@CurrentUser() user: AuthUser) {
+    const data = await this.bookings.findMine(user);
+    return { success: true, data };
+  }
+
+  @Get(":id")
+  async detail(@Param("id") id: string, @CurrentUser() user: AuthUser) {
+    const data = await this.bookings.findOne(id, user);
+    return { success: true, data };
+  }
+}
