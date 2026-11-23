@@ -1,4 +1,4 @@
-import { Body, Controller, Get, Param, Post } from "@nestjs/common";
+import { Body, Controller, Get, HttpCode, Param, Post } from "@nestjs/common";
 import {
   CurrentUser,
   AuthUser,
@@ -28,6 +28,13 @@ export class BookingsController {
   @Get(":id")
   async detail(@Param("id") id: string, @CurrentUser() user: AuthUser) {
     const data = await this.bookings.findOne(id, user);
+    return { success: true, data };
+  }
+
+  @HttpCode(200)
+  @Post(":id/cancel")
+  async cancel(@Param("id") id: string, @CurrentUser() user: AuthUser) {
+    const data = await this.bookings.cancel(id, user);
     return { success: true, data };
   }
 }

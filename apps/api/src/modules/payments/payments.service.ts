@@ -27,12 +27,13 @@ export class PaymentsService {
     this.webhookSecret = config.get<string>("STRIPE_WEBHOOK_SECRET") ?? "";
   }
 
+  /** สร้าง PaymentIntent สำหรับ booking → คืน clientSecret ให้ frontend เอาไปจ่าย */
   async createIntent(bookingId: string, user: AuthUser) {
     const booking = await this.prisma.booking.findUnique({
       where: { id: bookingId },
     });
     if (!booking) throw new NotFoundException("Booking not found");
-    assertCanAccess(booking.bookerId, user, [...STAFF_ROLES]);
+    assertCanAccess(booking.bookerId, user, [...STAFF_ROLES]); // เจ้าของ/staff เท่านั้น
 
     if (booking.status !== "pending") {
       throw new ConflictException("Booking is not awaiting payment");
@@ -41,18 +42,22 @@ export class PaymentsService {
       throw new ConflictException("Booking hold has expired");
     }
 
+    // บาท → สตางค์ (Stripe รับหน่วยย่อยสุดเป็นจำนวนเต็ม): 2808.00 → 280800
     const amount = booking.totalAmount.mul(100).toNumber();
 
     const intent = await this.stripe.paymentIntents.create({
       amount,
-      currency: booking.currency.toLowerCase(),
+      currency: booking.currency.toLowerCase(), // "thb"
       metadata: {
-        bookingId: booking.id,
+        bookingId: booking.id, // ← webhook ใช้ตัวนี้บอกว่า payment ของ booking ไหน
         confirmationNumber: booking.confirmationNumber,
       },
+      // enabled: ให้ Stripe จัดการวิธีจ่าย · allow_redirects: "never" = ไม่เอาวิธีที่ต้อง redirect
+      // → เหลือ card เป็นหลัก + confirm ผ่าน CLI ได้โดยไม่ต้องมี return_url
       automatic_payment_methods: { enabled: true, allow_redirects: "never" },
     });
 
+    // 1 booking = 1 Payment (bookingId unique) → upsert เผื่อกดจ่ายซ้ำ
     await this.prisma.payment.upsert({
       where: { bookingId: booking.id },
       create: {
@@ -68,13 +73,14 @@ export class PaymentsService {
     });
 
     return {
-      paymentIntentId: intent.id,
+      paymentIntentId: intent.id, // ไม่ลับ (client_secret ต่างหากที่ลับ) — ไว้เทสผ่าน CLI
       clientSecret: intent.client_secret,
       amount,
       currency: booking.currency,
     };
   }
 
+  /** รับ webhook จาก Stripe (แหล่งความจริง) → verify signature แล้วจัดการตาม event */
   async handleWebhook(rawBody: Buffer, signature: string) {
     let event: Stripe.Event;
     try {
@@ -84,6 +90,7 @@ export class PaymentsService {
         this.webhookSecret,
       );
     } catch (err) {
+      // signature ไม่ผ่าน = อาจเป็น webhook ปลอม → ปฏิเสธ
       this.logger.warn(
         `Webhook signature verification failed: ${(err as Error).message}`,
       );
@@ -98,7 +105,7 @@ export class PaymentsService {
         await this.markFailed(event.data.object as Stripe.PaymentIntent);
         break;
       default:
-        break;
+        break; // event อื่นๆ ไม่สน
     }
     return { received: true };
   }
@@ -111,8 +118,18 @@ export class PaymentsService {
       where: { bookingId },
     });
     if (!payment) return;
-    if (payment.status === "paid") return;
+    if (payment.status === "paid") return; // 🔁 idempotent — เคยยืนยันแล้ว (Stripe ส่งซ้ำได้) ข้าม
 
+    // guard: ยืนยันเฉพาะ booking ที่ยัง "รอจ่าย" — กันเคสจ่ายช้าหลัง booking ถูกยกเลิก
+    const booking = await this.prisma.booking.findUnique({ where: { id: bookingId } });
+    if (!booking || booking.status !== "pending") {
+      this.logger.warn(
+        `Skip confirm — booking ${bookingId} not pending (status: ${booking?.status ?? "missing"})`,
+      );
+      return;
+    }
+
+    // อัปเดต payment + booking พร้อมกันใน transaction (ทั้งคู่สำเร็จ หรือย้อนกลับทั้งคู่)
     await this.prisma.$transaction([
       this.prisma.payment.update({
         where: { bookingId },
@@ -138,5 +155,45 @@ export class PaymentsService {
       where: { bookingId, status: { not: "paid" } },
       data: { status: "failed" },
     });
+  }
+
+  /**
+   * จัดการเงินตอนยกเลิก booking (เรียกจาก BookingsService.cancel)
+   * - paid    → refund เต็มผ่าน Stripe → Payment=refunded
+   * - pending → ยกเลิก PaymentIntent ที่ค้าง → Payment=failed
+   */
+  async handleCancellationPayment(
+    bookingId: string,
+  ): Promise<"refunded" | "cancelled" | "none"> {
+    const payment = await this.prisma.payment.findUnique({
+      where: { bookingId },
+    });
+    if (!payment || !payment.providerIntentId) return "none";
+
+    if (payment.status === "paid") {
+      await this.stripe.refunds.create({
+        payment_intent: payment.providerIntentId,
+      });
+      await this.prisma.payment.update({
+        where: { bookingId },
+        data: { status: "refunded" },
+      });
+      return "refunded";
+    }
+
+    if (payment.status === "pending") {
+      try {
+        await this.stripe.paymentIntents.cancel(payment.providerIntentId);
+      } catch {
+        // intent อาจ succeeded/ถูกยกเลิกไปแล้ว — ไม่เป็นไร
+      }
+      await this.prisma.payment.update({
+        where: { bookingId },
+        data: { status: "failed" },
+      });
+      return "cancelled";
+    }
+
+    return "none";
   }
 }

@@ -8,6 +8,7 @@ import { Prisma } from "@prisma/client";
 import { randomBytes } from "crypto";
 import { PrismaService } from "../../prisma/prisma.service";
 import { RoomsService } from "../rooms/rooms.service";
+import { PaymentsService } from "../payments/payments.service";
 import { LockService } from "../../redis/lock.service";
 import { assertCanAccess } from "../../common/auth/ownership.util";
 import { AuthUser } from "../../common/decorators/current-user.decorator";
@@ -25,6 +26,7 @@ export class BookingsService {
     private readonly prisma: PrismaService,
     private readonly rooms: RoomsService,
     private readonly lock: LockService,
+    private readonly payments: PaymentsService,
   ) {}
 
   async create(dto: CreateBookingDto, booker: AuthUser) {
@@ -120,6 +122,30 @@ export class BookingsService {
     if (!booking) throw new NotFoundException("Booking not found");
     assertCanAccess(booking.bookerId, user, [...STAFF_ROLES]);
     return booking;
+  }
+
+  async cancel(id: string, user: AuthUser) {
+    const booking = await this.prisma.booking.findUnique({ where: { id } });
+    if (!booking) throw new NotFoundException("Booking not found");
+    assertCanAccess(booking.bookerId, user, [...STAFF_ROLES]);
+
+    if (booking.status !== "pending" && booking.status !== "confirmed") {
+      throw new ConflictException(`Cannot cancel a ${booking.status} booking`);
+    }
+
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    if (booking.checkIn <= today) {
+      throw new ConflictException("Cannot cancel on or after the check-in date");
+    }
+
+    const refund = await this.payments.handleCancellationPayment(booking.id);
+
+    const cancelled = await this.prisma.booking.update({
+      where: { id },
+      data: { status: "cancelled" },
+    });
+    return { ...cancelled, refund };
   }
 
   private generateConfirmationNumber(): string {
