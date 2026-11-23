@@ -6,10 +6,12 @@ import cookieParser from "cookie-parser";
 import { AppModule } from "./app.module";
 
 async function bootstrap() {
-  const app = await NestFactory.create(AppModule, { bufferLogs: false });
+  const app = await NestFactory.create(AppModule, {
+    bufferLogs: false,
+    rawBody: true,
+  });
   const config = app.get(ConfigService);
 
-  // Behind Render's proxy — needed for secure cookies + rate limiting.
   app.getHttpAdapter().getInstance().set("trust proxy", 1);
 
   app.use(helmet());
@@ -26,11 +28,8 @@ async function bootstrap() {
     methods: ["GET", "POST", "PATCH", "PUT", "DELETE", "OPTIONS"],
   });
 
-  // Everything lives under /api/v1 (matches the original API shape).
   app.setGlobalPrefix("api/v1");
 
-  // Global validation: strip unknown fields (blocks mass assignment),
-  // reject requests that send them, and transform payloads to DTO types.
   app.useGlobalPipes(
     new ValidationPipe({
       whitelist: true,

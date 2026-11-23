@@ -10,6 +10,7 @@ import { UsersModule } from "./modules/users/users.module";
 import { RoomsModule } from "./modules/rooms/rooms.module";
 import { RedisModule } from "./redis/redis.module";
 import { BookingsModule } from "./modules/bookings/bookings.module";
+import { PaymentsModule } from "./modules/payments/payments.module";
 import { JwtAuthGuard } from "./common/guards/jwt-auth.guard";
 import { RolesGuard } from "./common/guards/roles.guard";
 import { AllExceptionsFilter } from "./common/filters/all-exceptions.filter";
@@ -29,6 +30,7 @@ import { HealthController } from "./health.controller";
     UsersModule,
     RoomsModule,
     BookingsModule,
+    PaymentsModule,
   ],
   controllers: [HealthController],
   providers: [
