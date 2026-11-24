@@ -43,3 +43,8 @@ packages/*/src/**/*.d.ts
 packages/*/src/**/*.js.map
 
 *:Zone.Identifier
+# curl cookie jars (test artifacts — มี token ห้าม commit)
+*.cookies
+cu.txt
+fd.txt
+cust.txt
