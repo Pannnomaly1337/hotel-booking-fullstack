@@ -6,6 +6,7 @@ import {
 import { Roles } from "../../common/decorators/roles.decorator";
 import { BookingsService } from "./bookings.service";
 import { CreateBookingDto } from "./dto/create-booking.dto";
+import { CheckInDto } from "./dto/check-in.dto";
 
 @Controller("bookings")
 export class BookingsController {
@@ -43,6 +44,26 @@ export class BookingsController {
   @Post(":id/cancel")
   async cancel(@Param("id") id: string, @CurrentUser() user: AuthUser) {
     const data = await this.bookings.cancel(id, user);
+    return { success: true, data };
+  }
+
+  @Roles("frontdesk", "manager", "admin")
+  @HttpCode(200)
+  @Post(":id/check-in")
+  async checkIn(
+    @Param("id") id: string,
+    @Body() dto: CheckInDto,
+    @CurrentUser() user: AuthUser,
+  ) {
+    const data = await this.bookings.checkIn(id, dto, user);
+    return { success: true, data };
+  }
+
+  @Roles("frontdesk", "manager", "admin")
+  @HttpCode(200)
+  @Post(":id/check-out")
+  async checkOut(@Param("id") id: string, @CurrentUser() user: AuthUser) {
+    const data = await this.bookings.checkOut(id, user);
     return { success: true, data };
   }
 }

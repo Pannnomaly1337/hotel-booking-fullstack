@@ -13,6 +13,7 @@ import { LockService } from "../../redis/lock.service";
 import { assertCanAccess } from "../../common/auth/ownership.util";
 import { AuthUser } from "../../common/decorators/current-user.decorator";
 import { CreateBookingDto } from "./dto/create-booking.dto";
+import { CheckInDto } from "./dto/check-in.dto";
 
 const TAX_RATE = new Prisma.Decimal("0.07"); // VAT 7%
 const SERVICE_RATE = new Prisma.Decimal("0.10"); // service charge 10%
@@ -229,6 +230,84 @@ export class BookingsService {
       data: { status: "cancelled" },
     });
     return { ...cancelled, refund };
+  }
+
+  async checkIn(id: string, dto: CheckInDto, _user: AuthUser) {
+    const booking = await this.prisma.booking.findUnique({ where: { id } });
+    if (!booking) throw new NotFoundException("Booking not found");
+
+    if (booking.status !== "confirmed") {
+      throw new ConflictException(
+        `Cannot check in a ${booking.status} booking (ต้องเป็น confirmed)`,
+      );
+    }
+
+    return this.lock.withLock(`roomtype:${booking.roomTypeId}`, async () => {
+      let room;
+      if (dto.roomId) {
+        room = await this.prisma.room.findUnique({ where: { id: dto.roomId } });
+        if (!room || room.roomTypeId !== booking.roomTypeId) {
+          throw new BadRequestException(
+            "Selected room does not match the booking's room type",
+          );
+        }
+        if (room.status !== "available") {
+          throw new ConflictException(
+            `Room ${room.roomNumber} is not available (status: ${room.status})`,
+          );
+        }
+      } else {
+        room = await this.prisma.room.findFirst({
+          where: { roomTypeId: booking.roomTypeId, status: "available" },
+          orderBy: { roomNumber: "asc" },
+        });
+        if (!room) {
+          throw new ConflictException(
+            "No available room to assign for this room type",
+          );
+        }
+      }
+
+      const [, updatedBooking] = await this.prisma.$transaction([
+        this.prisma.room.update({
+          where: { id: room.id },
+          data: { status: "occupied" },
+        }),
+        this.prisma.booking.update({
+          where: { id },
+          data: { status: "checked_in", roomId: room.id },
+        }),
+      ]);
+      return updatedBooking;
+    });
+  }
+
+  async checkOut(id: string, _user: AuthUser) {
+    const booking = await this.prisma.booking.findUnique({ where: { id } });
+    if (!booking) throw new NotFoundException("Booking not found");
+
+    if (booking.status !== "checked_in") {
+      throw new ConflictException(
+        `Cannot check out a ${booking.status} booking (ต้องเป็น checked_in)`,
+      );
+    }
+
+    const ops: Prisma.PrismaPromise<unknown>[] = [
+      this.prisma.booking.update({
+        where: { id },
+        data: { status: "checked_out" },
+      }),
+    ];
+    if (booking.roomId) {
+      ops.push(
+        this.prisma.room.update({
+          where: { id: booking.roomId },
+          data: { status: "cleaning" },
+        }),
+      );
+    }
+    const [updatedBooking] = await this.prisma.$transaction(ops);
+    return updatedBooking;
   }
 
   private generateConfirmationNumber(): string {
