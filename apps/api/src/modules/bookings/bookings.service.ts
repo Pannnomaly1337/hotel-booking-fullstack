@@ -4,7 +4,7 @@ import {
   Injectable,
   NotFoundException,
 } from "@nestjs/common";
-import { Prisma } from "@prisma/client";
+import { Prisma, RoomType } from "@prisma/client";
 import { randomBytes } from "crypto";
 import { PrismaService } from "../../prisma/prisma.service";
 import { RoomsService } from "../rooms/rooms.service";
@@ -20,6 +20,19 @@ const PENDING_HOLD_MINUTES = 15;
 const STAFF_ROLES = ["frontdesk", "manager", "admin"] as const;
 const MS_PER_DAY = 24 * 60 * 60 * 1000;
 
+type PricedBooking = {
+  roomType: RoomType;
+  checkIn: Date;
+  checkOut: Date;
+  nights: number;
+  adults: number;
+  children: number;
+  roomSubtotal: Prisma.Decimal;
+  taxAmount: Prisma.Decimal;
+  serviceCharge: Prisma.Decimal;
+  totalAmount: Prisma.Decimal;
+};
+
 @Injectable()
 export class BookingsService {
   constructor(
@@ -29,7 +42,7 @@ export class BookingsService {
     private readonly payments: PaymentsService,
   ) {}
 
-  async create(dto: CreateBookingDto, booker: AuthUser) {
+  private async validateAndPrice(dto: CreateBookingDto): Promise<PricedBooking> {
     const checkIn = new Date(dto.checkIn);
     const checkOut = new Date(dto.checkOut);
 
@@ -53,7 +66,9 @@ export class BookingsService {
       throw new BadRequestException("Guest count exceeds room capacity");
     }
 
-    const nights = Math.round((checkOut.getTime() - checkIn.getTime()) / MS_PER_DAY);
+    const nights = Math.round(
+      (checkOut.getTime() - checkIn.getTime()) / MS_PER_DAY,
+    );
 
     const roomSubtotal = roomType.basePrice.mul(nights).toDecimalPlaces(2);
     const taxAmount = roomSubtotal.mul(TAX_RATE).toDecimalPlaces(2);
@@ -63,11 +78,41 @@ export class BookingsService {
       .add(serviceCharge)
       .toDecimalPlaces(2);
 
-    const expiresAt = new Date(Date.now() + PENDING_HOLD_MINUTES * 60 * 1000);
+    return {
+      roomType,
+      checkIn,
+      checkOut,
+      nights,
+      adults,
+      children,
+      roomSubtotal,
+      taxAmount,
+      serviceCharge,
+      totalAmount,
+    };
+  }
 
-    return this.lock.withLock(`roomtype:${roomType.id}`, async () => {
+  private guestData(dto: CreateBookingDto) {
+    return {
+      guestFirstName: dto.guestFirstName,
+      guestLastName: dto.guestLastName,
+      guestEmail: dto.guestEmail.trim().toLowerCase(),
+      guestPhone: dto.guestPhone,
+      guestCountry: dto.guestCountry ?? "TH",
+      specialRequest: dto.specialRequest,
+      estimatedArrival: dto.estimatedArrival,
+    };
+  }
+
+  private async reserveInLock(
+    roomTypeId: string,
+    checkIn: Date,
+    checkOut: Date,
+    data: Prisma.BookingUncheckedCreateInput,
+  ) {
+    return this.lock.withLock(`roomtype:${roomTypeId}`, async () => {
       const available = await this.rooms.availableRoomCount(
-        roomType.id,
+        roomTypeId,
         checkIn,
         checkOut,
       );
@@ -76,34 +121,72 @@ export class BookingsService {
           "No rooms available for the selected dates",
         );
       }
-
-      return this.prisma.booking.create({
-        data: {
-          confirmationNumber: this.generateConfirmationNumber(),
-          channel: "online",
-          roomTypeId: roomType.id,
-          bookerId: booker.id,
-          checkIn,
-          checkOut,
-          nights,
-          adults,
-          children,
-          guestFirstName: dto.guestFirstName,
-          guestLastName: dto.guestLastName,
-          guestEmail: dto.guestEmail.trim().toLowerCase(),
-          guestPhone: dto.guestPhone,
-          guestCountry: dto.guestCountry ?? "TH",
-          specialRequest: dto.specialRequest,
-          estimatedArrival: dto.estimatedArrival,
-          roomSubtotal,
-          taxAmount,
-          serviceCharge,
-          totalAmount,
-          status: "pending",
-          expiresAt,
-        },
-      });
+      return this.prisma.booking.create({ data });
     });
+  }
+
+  async create(dto: CreateBookingDto, booker: AuthUser) {
+    const p = await this.validateAndPrice(dto);
+    const expiresAt = new Date(Date.now() + PENDING_HOLD_MINUTES * 60 * 1000);
+
+    return this.reserveInLock(p.roomType.id, p.checkIn, p.checkOut, {
+      confirmationNumber: this.generateConfirmationNumber(),
+      channel: "online",
+      roomTypeId: p.roomType.id,
+      bookerId: booker.id,
+      checkIn: p.checkIn,
+      checkOut: p.checkOut,
+      nights: p.nights,
+      adults: p.adults,
+      children: p.children,
+      ...this.guestData(dto),
+      roomSubtotal: p.roomSubtotal,
+      taxAmount: p.taxAmount,
+      serviceCharge: p.serviceCharge,
+      totalAmount: p.totalAmount,
+      status: "pending",
+      expiresAt,
+    });
+  }
+
+  async createWalkIn(dto: CreateBookingDto, staff: AuthUser) {
+    const p = await this.validateAndPrice(dto);
+
+    const booking = await this.reserveInLock(
+      p.roomType.id,
+      p.checkIn,
+      p.checkOut,
+      {
+        confirmationNumber: this.generateConfirmationNumber(),
+        channel: "walk_in",
+        roomTypeId: p.roomType.id,
+        bookerId: staff.id,
+        checkIn: p.checkIn,
+        checkOut: p.checkOut,
+        nights: p.nights,
+        adults: p.adults,
+        children: p.children,
+        ...this.guestData(dto),
+        roomSubtotal: p.roomSubtotal,
+        taxAmount: p.taxAmount,
+        serviceCharge: p.serviceCharge,
+        totalAmount: p.totalAmount,
+        status: "confirmed",
+      },
+    );
+
+    await this.prisma.payment.create({
+      data: {
+        bookingId: booking.id,
+        method: "cash",
+        status: "paid",
+        amount: p.totalAmount,
+        amountPaid: p.totalAmount,
+        paidAt: new Date(),
+      },
+    });
+
+    return booking;
   }
 
   async findMine(user: AuthUser) {
