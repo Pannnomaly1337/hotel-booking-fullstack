@@ -16,9 +16,9 @@ interface AuthContextValue {
   login: (credentials: {
     email: string;
     password: string;
-  }) => Promise<boolean>;
+  }) => Promise<PublicUser | null>;
   logout: () => Promise<void>;
-  fetchUser: () => Promise<void>;
+  refresh: () => Promise<void>;
 }
 
 const AuthContext = createContext<AuthContextValue | undefined>(undefined);
@@ -27,7 +27,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<PublicUser | null>(null);
   const [authLoading, setAuthLoading] = useState(true);
 
-  const fetchUser = async () => {
+  const refresh = async () => {
     try {
       const { data } = await api.get("/users/auth/cookie/me");
       setUser(data.user);
@@ -39,22 +39,19 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     (async () => {
       setAuthLoading(true);
-      await fetchUser();
+      await refresh();
       setAuthLoading(false);
     })();
   }, []);
 
   const login = async (credentials: { email: string; password: string }) => {
     try {
-      const { data } = await api.post(
-        "/users/auth/cookie/login",
-        credentials,
-      );
+      const { data } = await api.post("/users/auth/cookie/login", credentials);
       setUser(data.user);
-      return true;
+      return data.user as PublicUser;
     } catch {
       setUser(null);
-      return false;
+      return null;
     }
   };
 
@@ -67,9 +64,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   };
 
   return (
-    <AuthContext.Provider
-      value={{ user, authLoading, login, logout, fetchUser }}
-    >
+    <AuthContext.Provider value={{ user, authLoading, login, logout, refresh }}>
       {children}
     </AuthContext.Provider>
   );

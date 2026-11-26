@@ -1,10 +1,23 @@
 import type { Metadata } from "next";
+import { Unbounded, Montserrat } from "next/font/google";
 import "./globals.css";
-import { AuthProvider } from "@/contexts/auth-context";
+import { Providers } from "./providers";
+
+const display = Unbounded({
+  subsets: ["latin"],
+  weight: ["400", "600", "700"],
+  variable: "--font-unbounded",
+});
+const sans = Montserrat({
+  subsets: ["latin"],
+  weight: ["400", "500", "600"],
+  variable: "--font-montserrat",
+});
 
 export const metadata: Metadata = {
-  title: "Hotel Booking",
-  description: "Hotel Booking System — Next.js + NestJS + Prisma",
+  title: "Aurelia — A boutique hotel in Bangkok",
+  description:
+    "A quiet hideaway of light-filled rooms. Book your stay at Aurelia.",
 };
 
 export default function RootLayout({
@@ -13,9 +26,9 @@ export default function RootLayout({
   children: React.ReactNode;
 }) {
   return (
-    <html lang="en">
-      <body>
-        <AuthProvider>{children}</AuthProvider>
+    <html lang="en" className={`${display.variable} ${sans.variable}`}>
+      <body className="min-h-screen bg-ink text-fg antialiased">
+        <Providers>{children}</Providers>
       </body>
     </html>
   );

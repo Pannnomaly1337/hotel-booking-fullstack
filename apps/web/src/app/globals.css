@@ -1,14 +1,41 @@
 @import "tailwindcss";
 
-:root {
-  --background: #ffffff;
-  --foreground: #0a0a0a;
+/* ───────── Aurelia design tokens (ธีมม่วงเข้ม) ───────── */
+@theme {
+  --color-ink: #0a0711; /* พื้นหลังหลัก */
+  --color-surface: #13101c; /* การ์ด/อินพุต */
+  --color-surface-2: #140e22;
+  --color-elevated: #16111f; /* การ์ดลอย (search) */
+  --color-inset: #0e0a18; /* อินพุตเข้มพิเศษ/ฟุตเตอร์ */
+  --color-border: #241b3a;
+  --color-border-2: #2a2340;
+  --color-fg: #f3f1f8; /* ตัวหนังสือหลัก */
+  --color-muted: #b6b2c4; /* ตัวหนังสือรอง */
+  --color-dim: #8e8aa0;
+  --color-faint: #7e7a90;
+  --color-brand: #8e6ef2; /* ม่วง accent หลัก */
+  --color-brand-light: #b6a2f7;
+  --color-brand-dark: #6d45e8;
+  --color-success: #4ade80;
+  --color-danger: #f87171;
+
+  --font-display: var(--font-unbounded), sans-serif;
+  --font-sans: var(--font-montserrat), system-ui, sans-serif;
 }
 
 html,
 body {
-  background: var(--background);
-  color: var(--foreground);
-  font-family:
-    ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  background: var(--color-ink);
+  color: var(--color-fg);
+  font-family: var(--font-sans);
+}
+
+a {
+  text-decoration: none;
+}
+
+input[type="number"]::-webkit-outer-spin-button,
+input[type="number"]::-webkit-inner-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
 }
