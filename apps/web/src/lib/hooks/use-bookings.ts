@@ -47,3 +47,51 @@ export function useBooking(id: string) {
     retry: false,
   });
 }
+
+export function useMyBookings() {
+  return useQuery({
+    queryKey: ["my-bookings"],
+    queryFn: async () => {
+      const { data } =
+        await api.get<ApiResponse<BookingWithRoomType[]>>("/bookings");
+      return data.data ?? [];
+    },
+  });
+}
+
+export function useCancelBooking() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (id: string) => {
+      const { data } = await api.post<ApiResponse<Booking>>(
+        `/bookings/${id}/cancel`,
+        {},
+      );
+      return data.data!;
+    },
+    onSuccess: (_data, id) => {
+      qc.invalidateQueries({ queryKey: ["my-bookings"] });
+      qc.invalidateQueries({ queryKey: ["booking", id] });
+      qc.invalidateQueries({ queryKey: ["rooms"] });
+    },
+  });
+}
+
+export interface PaymentIntentResult {
+  clientSecret: string;
+  amount: number;
+  currency: string;
+  paymentIntentId: string;
+}
+
+export function useCreatePaymentIntent() {
+  return useMutation({
+    mutationFn: async (bookingId: string) => {
+      const { data } = await api.post<ApiResponse<PaymentIntentResult>>(
+        "/payments/create-intent",
+        { bookingId },
+      );
+      return data.data!;
+    },
+  });
+}

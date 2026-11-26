@@ -1,24 +1,22 @@
 "use client";
 
+import { useEffect, useState } from "react";
 import Link from "next/link";
 import { useParams } from "next/navigation";
+import { AxiosError } from "axios";
 import { SiteNav } from "@/components/site-nav";
 import { SiteFooter } from "@/components/site-footer";
 import { Button } from "@/components/ui/button";
-import { Badge, type BadgeProps } from "@/components/ui/badge";
+import { BookingStatusBadge } from "@/components/booking-status";
+import { PaymentForm } from "@/components/payment-form";
 import { formatTHB } from "@/lib/utils";
 import { useAuth } from "@/contexts/auth-context";
-import { useBooking } from "@/lib/hooks/use-bookings";
-import type { BookingStatus } from "@repo/types";
-
-const statusTone: Record<BookingStatus, BadgeProps["tone"]> = {
-  pending: "brand",
-  confirmed: "success",
-  checked_in: "success",
-  checked_out: "muted",
-  cancelled: "danger",
-  no_show: "danger",
-};
+import {
+  useBooking,
+  useCancelBooking,
+  useCreatePaymentIntent,
+  type BookingWithRoomType,
+} from "@/lib/hooks/use-bookings";
 
 function Row({ label, value }: { label: string; value: string }) {
   return (
@@ -29,10 +27,114 @@ function Row({ label, value }: { label: string; value: string }) {
   );
 }
 
+function errMsg(e: unknown, fallback: string) {
+  const m = (e as AxiosError<{ message?: string }>)?.response?.data?.message;
+  return Array.isArray(m) ? m[0] : (m ?? fallback);
+}
+
+function PaymentSection({
+  booking,
+  onPaid,
+}: {
+  booking: BookingWithRoomType;
+  onPaid: () => void;
+}) {
+  const createPI = useCreatePaymentIntent();
+  const [clientSecret, setClientSecret] = useState<string | null>(null);
+  const [err, setErr] = useState<string | null>(null);
+
+  const startPay = async () => {
+    setErr(null);
+    try {
+      const r = await createPI.mutateAsync(booking.id);
+      setClientSecret(r.clientSecret);
+    } catch (e) {
+      setErr(errMsg(e, "Couldn't start payment"));
+    }
+  };
+
+  return (
+    <div className="mt-6 rounded-2xl border border-brand/40 bg-brand/5 p-6">
+      <p className="mb-3 text-sm text-muted">
+        This booking is <span className="text-fg">held</span> pending payment
+        {booking.expiresAt
+          ? ` until ${new Date(booking.expiresAt).toLocaleString()}`
+          : ""}
+        .
+      </p>
+      {err && <p className="mb-3 text-sm text-danger">{err}</p>}
+      {!clientSecret ? (
+        <Button
+          className="w-full"
+          onClick={startPay}
+          disabled={createPI.isPending}
+        >
+          {createPI.isPending ? "Starting…" : `Pay ${formatTHB(booking.totalAmount)}`}
+        </Button>
+      ) : (
+        <PaymentForm clientSecret={clientSecret} onPaid={onPaid} />
+      )}
+    </div>
+  );
+}
+
+function CancelBlock({ id }: { id: string }) {
+  const cancel = useCancelBooking();
+  const [confirm, setConfirm] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+
+  const doCancel = async () => {
+    setErr(null);
+    try {
+      await cancel.mutateAsync(id);
+    } catch (e) {
+      setErr(errMsg(e, "Could not cancel"));
+      setConfirm(false);
+    }
+  };
+
+  return (
+    <div className="mt-6">
+      {err && <p className="mb-2 text-sm text-danger">{err}</p>}
+      {!confirm ? (
+        <Button variant="ghost" onClick={() => setConfirm(true)}>
+          Cancel booking
+        </Button>
+      ) : (
+        <div className="flex items-center gap-3">
+          <span className="text-sm text-muted">Cancel this booking?</span>
+          <Button
+            variant="danger"
+            size="sm"
+            onClick={doCancel}
+            disabled={cancel.isPending}
+          >
+            {cancel.isPending ? "Cancelling…" : "Yes, cancel"}
+          </Button>
+          <Button variant="ghost" size="sm" onClick={() => setConfirm(false)}>
+            Keep it
+          </Button>
+        </div>
+      )}
+    </div>
+  );
+}
+
 export default function BookingDetailPage() {
   const { id } = useParams<{ id: string }>();
   const { user, authLoading } = useAuth();
-  const { data: b, isLoading, isError } = useBooking(id);
+  const { data: b, isLoading, isError, refetch } = useBooking(id);
+  const [justPaid, setJustPaid] = useState(false);
+
+  useEffect(() => {
+    if (!justPaid || b?.status === "confirmed") return;
+    const iv = setInterval(() => refetch(), 2000);
+    const stop = setTimeout(() => clearInterval(iv), 20000);
+    return () => {
+      clearInterval(iv);
+      clearTimeout(stop);
+    };
+  }, [justPaid, b?.status, refetch]);
 
   return (
     <>
@@ -41,7 +143,10 @@ export default function BookingDetailPage() {
         {!authLoading && !user && (
           <div>
             <p className="text-muted">Please sign in to view this booking.</p>
-            <Link href="/login" className="mt-3 inline-block text-brand">
+            <Link
+              href={`/login?next=/bookings/${id}`}
+              className="mt-3 inline-block text-brand"
+            >
               Sign in →
             </Link>
           </div>
@@ -64,7 +169,7 @@ export default function BookingDetailPage() {
                   {b.confirmationNumber}
                 </h1>
               </div>
-              <Badge tone={statusTone[b.status]}>{b.status}</Badge>
+              <BookingStatusBadge status={b.status} />
             </div>
 
             <div className="rounded-2xl border border-border bg-surface p-6">
@@ -82,7 +187,6 @@ export default function BookingDetailPage() {
                   }`}
                 />
               </div>
-
               <div className="pt-3">
                 <Row label="Room subtotal" value={formatTHB(b.roomSubtotal)} />
                 <Row label="Tax (7%)" value={formatTHB(b.taxAmount)} />
@@ -96,27 +200,27 @@ export default function BookingDetailPage() {
               </div>
             </div>
 
-            {b.status === "pending" && (
-              <div className="mt-6 rounded-2xl border border-brand/40 bg-brand/5 p-6">
-                <p className="mb-3 text-sm text-muted">
-                  This booking is <span className="text-fg">held</span> pending
-                  payment
-                  {b.expiresAt
-                    ? ` until ${new Date(b.expiresAt).toLocaleString()}`
-                    : ""}
-                  .
-                </p>
-                <Button className="w-full" disabled>
-                  Pay now (coming in W3)
-                </Button>
+            {b.status === "pending" &&
+              (justPaid ? (
+                <div className="mt-6 rounded-2xl border border-brand/40 bg-brand/5 p-6 text-sm text-muted">
+                  Confirming your payment… (waiting for Stripe)
+                </div>
+              ) : (
+                <PaymentSection booking={b} onPaid={() => setJustPaid(true)} />
+              ))}
+
+            {b.status === "confirmed" && (
+              <div className="mt-6 rounded-2xl border border-success/40 bg-success/5 p-6 text-sm text-fg">
+                ✓ Payment received — your stay is confirmed. See you soon!
               </div>
             )}
 
-            <Link
-              href="/rooms"
-              className="mt-6 inline-block text-sm text-brand"
-            >
-              ← Browse more rooms
+            {(b.status === "pending" || b.status === "confirmed") && (
+              <CancelBlock id={b.id} />
+            )}
+
+            <Link href="/bookings" className="mt-6 inline-block text-sm text-brand">
+              ← All my bookings
             </Link>
           </>
         )}
