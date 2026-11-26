@@ -3,11 +3,14 @@ import { cn } from "@/lib/utils";
 
 export function AuthShell({
   tab,
+  next,
   children,
 }: {
   tab: "login" | "register";
+  next?: string;
   children: React.ReactNode;
 }) {
+  const q = next ? `?next=${encodeURIComponent(next)}` : "";
   const tabCls = (active: boolean) =>
     cn(
       "flex-1 rounded-lg py-2.5 text-center text-sm font-semibold transition-colors",
@@ -16,7 +19,6 @@ export function AuthShell({
 
   return (
     <div className="flex min-h-screen flex-wrap">
-      {/* แผงแบรนด์ */}
       <div className="flex min-w-0 flex-[1_1_440px] flex-col justify-between bg-gradient-to-br from-brand-dark via-[#2a1a52] to-[#120b22] p-10 md:p-16">
         <Link href="/" className="font-display text-2xl font-bold tracking-wide">
           AURELIA
@@ -33,14 +35,13 @@ export function AuthShell({
         <p className="text-sm text-[#c9bef0]">© 2026 Aurelia Hotel · Bangkok</p>
       </div>
 
-      {/* แผงฟอร์ม */}
       <div className="flex min-w-0 flex-[999_1_520px] items-center justify-center p-8 md:p-16">
         <div className="w-full max-w-sm">
           <div className="mb-8 flex gap-1.5 rounded-xl border border-border bg-surface p-1.5">
-            <Link href="/login" className={tabCls(tab === "login")}>
+            <Link href={`/login${q}`} className={tabCls(tab === "login")}>
               Sign in
             </Link>
-            <Link href="/register" className={tabCls(tab === "register")}>
+            <Link href={`/register${q}`} className={tabCls(tab === "register")}>
               Create account
             </Link>
           </div>

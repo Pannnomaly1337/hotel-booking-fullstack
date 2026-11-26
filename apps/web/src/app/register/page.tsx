@@ -1,8 +1,8 @@
 "use client";
 
-import { useState } from "react";
+import { Suspense, useState } from "react";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
@@ -10,6 +10,7 @@ import { AxiosError } from "axios";
 import { api } from "@/lib/api";
 import { useAuth } from "@/contexts/auth-context";
 import { homeForRole } from "@/lib/roles";
+import { safeInternalPath } from "@/lib/utils";
 import { AuthShell } from "@/components/auth-shell";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -24,9 +25,10 @@ const schema = z.object({
 });
 type FormValues = z.infer<typeof schema>;
 
-export default function RegisterPage() {
+function RegisterInner() {
   const { login } = useAuth();
   const router = useRouter();
+  const next = safeInternalPath(useSearchParams().get("next"));
   const [err, setErr] = useState<string | null>(null);
   const {
     register,
@@ -39,7 +41,7 @@ export default function RegisterPage() {
     try {
       await api.post("/users", v);
       const user = await login({ email: v.email, password: v.password });
-      router.push(homeForRole(user?.role));
+      router.push(next || homeForRole(user?.role));
     } catch (e) {
       const msg =
         (e as AxiosError<{ message?: string }>)?.response?.data?.message ??
@@ -51,7 +53,7 @@ export default function RegisterPage() {
   const field = "space-y-2";
 
   return (
-    <AuthShell tab="register">
+    <AuthShell tab="register" next={next ?? undefined}>
       <h2 className="mb-2 font-display text-2xl font-semibold">
         Create account
       </h2>
@@ -110,10 +112,21 @@ export default function RegisterPage() {
 
       <p className="mt-7 text-center text-sm text-dim">
         Already have an account?{" "}
-        <Link href="/login" className="font-semibold text-brand">
+        <Link
+          href={`/login${next ? `?next=${encodeURIComponent(next)}` : ""}`}
+          className="font-semibold text-brand"
+        >
           Sign in
         </Link>
       </p>
     </AuthShell>
+  );
+}
+
+export default function RegisterPage() {
+  return (
+    <Suspense fallback={<div className="p-16 text-dim">Loading…</div>}>
+      <RegisterInner />
+    </Suspense>
   );
 }

@@ -1,13 +1,14 @@
 "use client";
 
-import { useState } from "react";
+import { Suspense, useState } from "react";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
 import { useAuth } from "@/contexts/auth-context";
 import { homeForRole } from "@/lib/roles";
+import { safeInternalPath } from "@/lib/utils";
 import { AuthShell } from "@/components/auth-shell";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -19,9 +20,10 @@ const schema = z.object({
 });
 type FormValues = z.infer<typeof schema>;
 
-export default function LoginPage() {
+function LoginInner() {
   const { login } = useAuth();
   const router = useRouter();
+  const next = safeInternalPath(useSearchParams().get("next"));
   const [err, setErr] = useState<string | null>(null);
   const {
     register,
@@ -32,12 +34,12 @@ export default function LoginPage() {
   const onSubmit = async (v: FormValues) => {
     setErr(null);
     const user = await login(v);
-    if (user) router.push(homeForRole(user.role));
-    else setErr("Invalid email or password");
+    if (!user) return setErr("Invalid email or password");
+    router.push(next || homeForRole(user.role));
   };
 
   return (
-    <AuthShell tab="login">
+    <AuthShell tab="login" next={next ?? undefined}>
       <h2 className="mb-2 font-display text-2xl font-semibold">Sign in</h2>
       <p className="mb-7 text-sm text-dim">Enter your details to continue.</p>
 
@@ -74,10 +76,21 @@ export default function LoginPage() {
 
       <p className="mt-7 text-center text-sm text-dim">
         New here?{" "}
-        <Link href="/register" className="font-semibold text-brand">
+        <Link
+          href={`/register${next ? `?next=${encodeURIComponent(next)}` : ""}`}
+          className="font-semibold text-brand"
+        >
           Create an account
         </Link>
       </p>
     </AuthShell>
+  );
+}
+
+export default function LoginPage() {
+  return (
+    <Suspense fallback={<div className="p-16 text-dim">Loading…</div>}>
+      <LoginInner />
+    </Suspense>
   );
 }
