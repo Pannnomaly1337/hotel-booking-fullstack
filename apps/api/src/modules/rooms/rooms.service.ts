@@ -1,16 +1,26 @@
 import {
   BadRequestException,
+  ConflictException,
   Injectable,
   NotFoundException,
 } from "@nestjs/common";
+import { RoomStatus } from "@repo/types";
 import { PrismaService } from "../../prisma/prisma.service";
 import { SearchAvailabilityDto } from "./dto/search-availability.dto";
+import { ListRoomsDto } from "./dto/list-rooms.dto";
+
+const ALLOWED_ROOM_TRANSITIONS: Record<RoomStatus, RoomStatus[]> = {
+  cleaning: ["available", "maintenance"],
+  maintenance: ["available"],
+  available: ["maintenance"],
+  occupied: [],
+  reserved: [],
+};
 
 @Injectable()
 export class RoomsService {
   constructor(private readonly prisma: PrismaService) {}
 
-  /** list ประเภทห้องทั้งหมด + จำนวนห้องของแต่ละประเภท */
   async listRoomTypes() {
     return this.prisma.roomType.findMany({
       orderBy: { basePrice: "asc" },
@@ -18,7 +28,6 @@ export class RoomsService {
     });
   }
 
-  /** รายละเอียดประเภทห้องตาม slug */
   async getRoomType(slug: string) {
     const type = await this.prisma.roomType.findUnique({
       where: { slug },
@@ -28,12 +37,6 @@ export class RoomsService {
     return type;
   }
 
-  /**
-   * จำนวนห้องว่างของ type ในช่วงวัน = ห้องทั้งหมด − ห้องที่ถูกจองทับช่วง (ADR-002)
-   * "ถูกจอง" = confirmed/checked_in  หรือ  pending ที่ "ยังไม่หมดอายุ" (hold 15 นาที)
-   * → pending ที่หมดอายุแล้วจะหยุดนับเอง = ปล่อยห้องคืนอัตโนมัติ โดยไม่ต้องมี cron (ADR-008)
-   * ใช้ร่วมกันทั้งตอนค้นห้อง (M1.3) และตอนสร้าง booking (M1.4)
-   */
   async availableRoomCount(
     roomTypeId: string,
     checkIn: Date,
@@ -43,7 +46,6 @@ export class RoomsService {
     const occupied = await this.prisma.booking.count({
       where: {
         roomTypeId,
-        // ช่วงทับกัน: existingCheckIn < newCheckOut AND existingCheckOut > newCheckIn
         checkIn: { lt: checkOut },
         checkOut: { gt: checkIn },
         OR: [
@@ -55,7 +57,6 @@ export class RoomsService {
     return total - occupied;
   }
 
-  /** ค้นประเภทห้องที่ยังว่างในช่วงวัน + รับจำนวนผู้เข้าพักได้ */
   async searchAvailability(dto: SearchAvailabilityDto) {
     const checkIn = new Date(dto.checkIn);
     const checkOut = new Date(dto.checkOut);
@@ -88,5 +89,37 @@ export class RoomsService {
         r.maxAdults >= adults &&
         r.maxChildren >= children,
     );
+  }
+
+  async listRooms(filters: ListRoomsDto) {
+    return this.prisma.room.findMany({
+      where: {
+        status: filters.status,
+        floor: filters.floor,
+        roomTypeId: filters.roomTypeId,
+      },
+      orderBy: [{ floor: "asc" }, { roomNumber: "asc" }],
+      include: { roomType: { select: { name: true, slug: true } } },
+    });
+  }
+
+  async updateRoomStatus(id: string, status: RoomStatus) {
+    const room = await this.prisma.room.findUnique({ where: { id } });
+    if (!room) throw new NotFoundException("Room not found");
+
+    if (room.status === status) return room;
+
+    const allowed = ALLOWED_ROOM_TRANSITIONS[room.status as RoomStatus] ?? [];
+    if (!allowed.includes(status)) {
+      const hint =
+        room.status === "occupied" || room.status === "reserved"
+          ? " — ห้องมีคนพัก/ถูกจองอยู่ เปลี่ยนผ่าน check-in/check-out เท่านั้น"
+          : "";
+      throw new ConflictException(
+        `Cannot change room status from ${room.status} to ${status}${hint}`,
+      );
+    }
+
+    return this.prisma.room.update({ where: { id }, data: { status } });
   }
 }
