@@ -1,4 +1,12 @@
-import { Body, Controller, Get, HttpCode, Param, Post } from "@nestjs/common";
+import {
+  Body,
+  Controller,
+  Get,
+  HttpCode,
+  Param,
+  Post,
+  Query,
+} from "@nestjs/common";
 import {
   CurrentUser,
   AuthUser,
@@ -7,6 +15,7 @@ import { Roles } from "../../common/decorators/roles.decorator";
 import { BookingsService } from "./bookings.service";
 import { CreateBookingDto } from "./dto/create-booking.dto";
 import { CheckInDto } from "./dto/check-in.dto";
+import { FindBookingsDto } from "./dto/find-bookings.dto";
 
 @Controller("bookings")
 export class BookingsController {
@@ -31,6 +40,13 @@ export class BookingsController {
   @Get()
   async mine(@CurrentUser() user: AuthUser) {
     const data = await this.bookings.findMine(user);
+    return { success: true, data };
+  }
+
+  @Roles("frontdesk", "manager", "admin")
+  @Get("all")
+  async all(@Query() dto: FindBookingsDto) {
+    const data = await this.bookings.findAll(dto);
     return { success: true, data };
   }
 

@@ -7,7 +7,7 @@ import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
 import { useAuth } from "@/contexts/auth-context";
-import { homeForRole } from "@/lib/roles";
+import { homeForRole, isStaff } from "@/lib/roles";
 import { safeInternalPath } from "@/lib/utils";
 import { AuthShell } from "@/components/auth-shell";
 import { Button } from "@/components/ui/button";
@@ -35,7 +35,11 @@ function LoginInner() {
     setErr(null);
     const user = await login(v);
     if (!user) return setErr("Invalid email or password");
-    router.push(next || homeForRole(user.role));
+    let dest = next || homeForRole(user.role);
+    if (dest.startsWith("/staff") && !isStaff(user.role)) {
+      dest = homeForRole(user.role);
+    }
+    router.push(dest);
   };
 
   return (

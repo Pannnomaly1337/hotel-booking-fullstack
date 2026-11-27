@@ -4,7 +4,7 @@ import {
   Injectable,
   NotFoundException,
 } from "@nestjs/common";
-import { Prisma, RoomType } from "@prisma/client";
+import { Prisma, RoomType, BookingStatus } from "@prisma/client";
 import { randomBytes } from "crypto";
 import { PrismaService } from "../../prisma/prisma.service";
 import { RoomsService } from "../rooms/rooms.service";
@@ -194,6 +194,14 @@ export class BookingsService {
     return this.prisma.booking.findMany({
       where: { bookerId: user.id },
       orderBy: { createdAt: "desc" },
+      include: { roomType: { select: { name: true, slug: true } } },
+    });
+  }
+
+  async findAll(filters: { status?: BookingStatus }) {
+    return this.prisma.booking.findMany({
+      where: { status: filters.status },
+      orderBy: [{ checkIn: "asc" }, { createdAt: "desc" }],
       include: { roomType: { select: { name: true, slug: true } } },
     });
   }

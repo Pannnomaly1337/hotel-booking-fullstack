@@ -12,7 +12,7 @@ export function SiteNav() {
 
   const onLogout = async () => {
     await logout();
-    router.push("/");
+    router.replace("/login");
   };
 
   return (

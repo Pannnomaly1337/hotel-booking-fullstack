@@ -1,5 +1,6 @@
 import { clsx, type ClassValue } from "clsx";
 import { twMerge } from "tailwind-merge";
+import { AxiosError } from "axios";
 
 export function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
@@ -17,4 +18,10 @@ export function safeInternalPath(p: string | null | undefined): string | null {
     return null;
   }
   return p;
+}
+
+export function apiErrorMessage(e: unknown, fallback: string): string {
+  const m = (e as AxiosError<{ message?: string }>)?.response?.data?.message;
+  if (Array.isArray(m)) return m[0];
+  return m ?? fallback;
 }

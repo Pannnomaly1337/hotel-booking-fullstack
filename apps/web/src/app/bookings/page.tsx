@@ -15,7 +15,7 @@ export default function MyBookingsPage() {
   const router = useRouter();
 
   useEffect(() => {
-    if (!authLoading && !user) router.replace("/login?next=/bookings");
+    if (!authLoading && !user) router.replace("/login");
   }, [authLoading, user, router]);
 
   const { data, isLoading } = useMyBookings();
